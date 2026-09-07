@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"os"
 
 	"github.com/gorilla/websocket"
+	"github.com/redis/go-redis/v9"
 )
 
 var upgrader websocket.Upgrader = websocket.Upgrader{
@@ -47,7 +49,7 @@ type Client struct {
 	send chan []byte
 }
 
-func (c *Client) readPump() {
+func (c *Client) readPump(rdb *redis.Client) {
 	defer func() {
 		c.hub.unregister <- c
 		c.conn.Close()
@@ -58,7 +60,9 @@ func (c *Client) readPump() {
 		if err != nil {
 			return
 		}
-		c.hub.broadcast <- message
+		if err := rdb.Publish(context.Background(), CHANNEL_NAME, message).Err(); err != nil {
+			log.Print("publish:", err)
+		}
 	}
 }
 
@@ -71,7 +75,7 @@ func (c *Client) writePump() {
 	}
 }
 
-func echo(h *Hub) http.Handler {
+func echo(h *Hub, rdb *redis.Client) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -104,9 +108,11 @@ func echo(h *Hub) http.Handler {
 		}
 
 		go client.writePump()
-		client.readPump()
+		client.readPump(rdb)
 	})
 }
+
+const CHANNEL_NAME = "messages"
 
 func main() {
 	flag.Parse()
@@ -120,7 +126,20 @@ func main() {
 	fmt.Print("websocket up and running...")
 
 	go hub.run()
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     "localhost:6379",
+		Password: "",
+		DB:       0,
+	})
+	subscription := rdb.Subscribe(context.Background(), CHANNEL_NAME)
+	defer subscription.Close()
 
-	http.Handle("/echo", echo(&hub))
+	go func() {
+		for message := range subscription.Channel() {
+			hub.broadcast <- []byte(message.Payload)
+		}
+	}()
+
+	http.Handle("/echo", echo(&hub, rdb))
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
