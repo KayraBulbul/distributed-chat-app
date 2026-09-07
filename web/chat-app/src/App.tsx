@@ -3,14 +3,25 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 function App() {
   const [messages, setMessages] = useState<string[]>([]);
   const [input, setInput] = useState<string>("");
+  const [server, setServer] = useState<string>("");
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    const ws = new WebSocket("ws://localhost:8080/echo");
+    const ws = new WebSocket("ws://localhost:8880/echo");
     wsRef.current = ws;
 
     ws.onmessage = (event: MessageEvent<string>) => {
-      setMessages((prev) => [...prev, event.data]);
+      try {
+        const message = JSON.parse(event.data);
+
+        if (message?.type === "server_info" &&
+          typeof message.server === "string") {
+          setServer(`Connected to ${message.server}`);
+          return;
+        }
+      } catch {
+        setMessages((prev) => [...prev, event.data]);
+      }
     };
 
     ws.onclose = () => {
@@ -38,13 +49,14 @@ function App() {
   return (
     <div>
       <h1>WebSocket Echo</h1>
+      <p>{server}</p>
       <ul>
         {messages.map((m, i) => (
           <li key={i}>{m}</li>
         ))}
       </ul>
       <form onSubmit={handleSend}>
-        <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Type a message..."/>
+        <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Type a message..." />
         <button type="submit">Send</button>
       </form>
     </div>

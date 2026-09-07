@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/gorilla/websocket"
 )
@@ -87,11 +88,25 @@ func echo(h *Hub) http.Handler {
 
 		client.hub.register <- client
 
+		hostname, err := os.Hostname()
+		if err != nil {
+			log.Print("hostname:", err)
+			return
+		}
+
+		err = c.WriteJSON(map[string]string{
+			"type":   "server_info",
+			"server": hostname,
+		})
+		if err != nil {
+			log.Print("server_info:", err)
+			return
+		}
+
 		go client.writePump()
 		client.readPump()
 	})
 }
-
 
 func main() {
 	flag.Parse()
