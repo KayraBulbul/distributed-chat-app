@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 
@@ -101,6 +102,7 @@ func main() {
 		register:  make(chan *Client),
 		broadcast: make(chan []byte),
 	}
+	fmt.Print("websocket up and running...")
 
 	go hub.run()
 
