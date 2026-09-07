@@ -1,0 +1,5 @@
+:80 {
+    reverse_proxy ws1:8080 ws2:8080 ws3:8080 {
+        lb_policy round_robin
+    }
+}
