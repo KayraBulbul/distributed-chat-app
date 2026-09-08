@@ -1,0 +1,18 @@
+services:
+  db:
+    image: postgres:18
+    env_file:
+      - ./backend/config/.env
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - ws-caddy
+
+networks:
+  ws-caddy:
+    external: true
+
+volumes:
+  postgres_data:
