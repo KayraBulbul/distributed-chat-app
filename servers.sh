@@ -5,6 +5,7 @@ start_or_run () {
 
     if [ $? -eq 0 ]; then
         echo "Starting websocket servers..."
+        docker start redis
         docker start caddy-balancer
         docker start ws1
         docker start ws2
@@ -22,6 +23,7 @@ case "$1" in
     docker stop ws2
     docker stop ws3
     docker stop caddy-balancer
+    docker stop redis
     ;;
   *)
     echo "Usage: $0 {start|stop}"
