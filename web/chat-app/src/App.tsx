@@ -1,66 +1,151 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
+type User = {
+  user_id: string;
+  username: string;
+};
+
+type ChatMessage = {
+  message_id: string;
+  username: string;
+  body: string;
+};
+
 function App() {
-  const [messages, setMessages] = useState<string[]>([]);
   const [input, setInput] = useState<string>("");
   const [server, setServer] = useState<string>("");
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [user, setUser] = useState<User | null>(null);
+  const [username, setUsername] = useState<string>("");
+  const [joining, setJoining] = useState<boolean>(false);
+  const [error, setError] = useState<string>("");
+  const [connected, setConnected] = useState<boolean>(false);
+
   const wsRef = useRef<WebSocket | null>(null);
 
+  async function handleJoin(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!username.trim() || joining) return;
+
+    setJoining(true);
+    setError("");
+
+    try {
+      const response = await fetch("http://localhost:8880/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: username.trim() }),
+      });
+
+      if (!response.ok) throw new Error("Could not create user");
+
+      setUser(await response.json());
+    } catch {
+      setError("Could not join, Please try again.");
+    } finally {
+      setJoining(false);
+    }
+  }
+
   useEffect(() => {
-    const ws = new WebSocket("ws://localhost:8880/echo");
+    if (!user) return;
+
+    const ws = new WebSocket(`ws://localhost:8880/echo?user_id=${encodeURIComponent(user.user_id)}`);
     wsRef.current = ws;
+
+    ws.onopen = () => {
+      setConnected(true);
+    }
 
     ws.onmessage = (event: MessageEvent<string>) => {
       try {
         const message = JSON.parse(event.data);
 
-        if (message?.type === "server_info" &&
-          typeof message.server === "string") {
+        if (message?.type === "server_info") {
           setServer(`Connected to ${message.server}`);
           return;
         }
+
+        if (
+          typeof message?.message_id === "string" &&
+          typeof message?.username === "string" &&
+          typeof message?.body === "string"
+        ) {
+          setMessages((prev) => [...prev, message])
+        }
       } catch {
-        setMessages((prev) => [...prev, event.data]);
+        console.error("Received invalid JSON:", event.data)
       }
     };
 
     ws.onclose = () => {
-      console.log("disconnected");
+      setConnected(false);
+      setServer("disconnected")
     }
 
-    return () => ws.close();
-  }, []);
+    ws.onerror = () => {
+      setConnected(false);
+      setServer("Connection error");
+    }
 
-  const send = useCallback((text: string) => {
+    return () => {
+      ws.close();
+      wsRef.current = null;
+    };
+  }, [user]);
+
+  const send = useCallback((text: string): boolean => {
     const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
 
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(text);
-    }
+    ws.send(text);
+    return true;
   }, []);
 
   const handleSend = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!input.trim()) return;
-    send(input);
-    setInput("");
+
+    if (send(input)) {
+      setInput("");
+    }
   }
 
-  return (
-    <div>
-      <h1>WebSocket Echo</h1>
-      <p>{server}</p>
-      <ul>
-        {messages.map((m, i) => (
-          <li key={i}>{m}</li>
-        ))}
-      </ul>
-      <form onSubmit={handleSend}>
-        <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Type a message..." />
-        <button type="submit">Send</button>
+  if (!user) {
+    return (
+      <form onSubmit={handleJoin}>
+        <input
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          placeholder="Enter your username"
+          aria-label="Username"
+          required
+        />
+        <button disabled={joining || !username.trim()}>
+          {joining ? "Joining..." : "Join chat"}
+        </button>
+        {error && <p role="alert">{error}</p>}
       </form>
-    </div>
-  );
+    );
+  } else {
+    return (
+      < div >
+        <h1>WebSocket Echo</h1>
+        <p>{server}</p>
+        <ul>
+          {messages.map((message: ChatMessage) => (
+            <li key={message.message_id}>
+              {message.username} &gt; {message.body}
+            </li>
+          ))}
+        </ul>
+        <form onSubmit={handleSend}>
+          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Type a message..." />
+          <button type="submit" disabled={!connected || !input.trim()}>Send</button>
+        </form>
+      </div >
+    );
+  }
 }
 
 export default App;
