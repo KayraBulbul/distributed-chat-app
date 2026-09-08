@@ -2,12 +2,19 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 
+	"github.com/KayraBulbul/distributed-chat-app/backend/config"
+	"github.com/KayraBulbul/distributed-chat-app/backend/internal/database"
+	"github.com/KayraBulbul/distributed-chat-app/backend/server/handlers"
+	"github.com/KayraBulbul/distributed-chat-app/backend/server/middleware"
+	"github.com/KayraBulbul/distributed-chat-app/backend/server/response"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 )
@@ -44,12 +51,14 @@ func (h *Hub) run() {
 }
 
 type Client struct {
-	hub  *Hub
-	conn *websocket.Conn
-	send chan []byte
+	hub      *Hub
+	conn     *websocket.Conn
+	send     chan []byte
+	userID   uuid.UUID
+	username string
 }
 
-func (c *Client) readPump(rdb *redis.Client) {
+func (c *Client) readPump(rdb *redis.Client, cfg *config.Config) {
 	defer func() {
 		c.hub.unregister <- c
 		c.conn.Close()
@@ -60,7 +69,37 @@ func (c *Client) readPump(rdb *redis.Client) {
 		if err != nil {
 			return
 		}
-		if err := rdb.Publish(context.Background(), CHANNEL_NAME, message).Err(); err != nil {
+
+		params := database.CreateMessageParams{
+			UserID: c.userID,
+			Body:   string(message),
+		}
+		msg, err := cfg.Queries.CreateMessage(context.Background(), params)
+		if err != nil {
+			log.Print("error saving message to db:", err)
+			continue
+		}
+
+		type jsonMessage struct {
+			MessageID uuid.UUID `json:"message_id"`
+			Username  string    `json:"username"`
+			Body      string    `json:"body"`
+		}
+
+		payload, err := json.Marshal(jsonMessage{
+			MessageID: msg.MessageID,
+			Username:  c.username,
+			Body:      msg.Body,
+		})
+		if err != nil {
+			log.Print("encode message:", err)
+			continue
+		}
+
+		if err := rdb.Publish(context.Background(),
+			CHANNEL_NAME,
+			payload,
+		).Err(); err != nil {
 			log.Print("publish:", err)
 		}
 	}
@@ -75,8 +114,20 @@ func (c *Client) writePump() {
 	}
 }
 
-func echo(h *Hub, rdb *redis.Client) http.Handler {
+func echo(h *Hub, rdb *redis.Client, cfg *config.Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		userID, err := uuid.Parse(r.URL.Query().Get("user_id"))
+		if err != nil {
+			response.WithError(w, http.StatusBadRequest, "Invalid userID")
+			return
+		}
+
+		user, err := cfg.Queries.FindUserByID(r.Context(), userID)
+		if err != nil {
+			response.WithError(w, http.StatusNotFound, "Cannot find user")
+			return
+		}
+
 		c, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			log.Print("upgrade:", err)
@@ -85,9 +136,11 @@ func echo(h *Hub, rdb *redis.Client) http.Handler {
 		defer c.Close()
 
 		client := &Client{
-			hub:  h,
-			conn: c,
-			send: make(chan []byte, 256),
+			hub:      h,
+			conn:     c,
+			send:     make(chan []byte, 256),
+			userID:   user.UserID,
+			username: user.Username,
 		}
 
 		client.hub.register <- client
@@ -108,7 +161,7 @@ func echo(h *Hub, rdb *redis.Client) http.Handler {
 		}
 
 		go client.writePump()
-		client.readPump(rdb)
+		client.readPump(rdb, cfg)
 	})
 }
 
@@ -119,9 +172,10 @@ func main() {
 	log.SetFlags(0)
 
 	hub := Hub{
-		clients:   make(map[*Client]bool),
-		register:  make(chan *Client),
-		broadcast: make(chan []byte),
+		clients:    make(map[*Client]bool),
+		register:   make(chan *Client),
+		broadcast:  make(chan []byte),
+		unregister: make(chan *Client),
 	}
 	fmt.Print("websocket up and running...")
 
@@ -140,6 +194,12 @@ func main() {
 		}
 	}()
 
-	http.Handle("/echo", echo(&hub, rdb))
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	cfg, err := config.CreateCfg()
+	if err != nil {
+		log.Fatal("error creating config")
+	}
+
+	http.HandleFunc("/users", handlers.CreateUser(&cfg))
+	http.Handle("/echo", echo(&hub, rdb, &cfg))
+	log.Fatal(http.ListenAndServe(":8080", middleware.Cors(http.DefaultServeMux)))
 }
