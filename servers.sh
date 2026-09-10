@@ -7,6 +7,9 @@ start_or_run () {
         echo "Starting websocket servers..."
         docker start redis
         docker start caddy-balancer
+        docker start chat-app-node-exporter-1
+        docker start chat-app-grafana-1
+        docker start chat-app-prometheus-1
         docker start chat-app-db-1
         docker start ws1
         docker start ws2
@@ -24,6 +27,9 @@ case "$1" in
     docker stop ws2
     docker stop ws3
     docker stop caddy-balancer
+    docker stop chat-app-node-exporter-1
+    docker stop chat-app-grafana-1
+    docker stop chat-app-prometheus-1
     docker stop chat-app-db-1
     docker stop redis
     ;;

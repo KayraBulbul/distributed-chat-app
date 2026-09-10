@@ -16,6 +16,7 @@ import (
 	"github.com/KayraBulbul/distributed-chat-app/backend/server/response"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -37,10 +38,12 @@ func (h *Hub) run() {
 		select {
 		case client := <-h.register:
 			h.clients[client] = true
+			activeConnections.Set(float64(len(h.clients)))
 		case client := <-h.unregister:
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
 				close(client.send)
+				activeConnections.Set(float64(len(h.clients)))
 			}
 		case message := <-h.broadcast:
 			for client := range h.clients {
@@ -69,6 +72,7 @@ func (c *Client) readPump(rdb *redis.Client, cfg *config.Config) {
 		if err != nil {
 			return
 		}
+		messagesReceived.Inc()
 
 		params := database.CreateMessageParams{
 			UserID: c.userID,
@@ -101,7 +105,9 @@ func (c *Client) readPump(rdb *redis.Client, cfg *config.Config) {
 			payload,
 		).Err(); err != nil {
 			log.Print("publish:", err)
+			continue
 		}
+		messagesPublished.Inc()
 	}
 }
 
@@ -201,5 +207,6 @@ func main() {
 
 	http.HandleFunc("/users", handlers.CreateUser(&cfg))
 	http.Handle("/echo", echo(&hub, rdb, &cfg))
+	http.Handle("/metrics", promhttp.Handler())
 	log.Fatal(http.ListenAndServe(":8080", middleware.Cors(http.DefaultServeMux)))
 }
