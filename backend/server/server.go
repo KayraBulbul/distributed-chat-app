@@ -70,7 +70,7 @@ func (c *Client) readPump(rdb *redis.Client, cfg *config.Config) {
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
-			continue
+			return
 		}
 		messagesReceived.Inc()
 
