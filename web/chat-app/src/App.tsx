@@ -50,47 +50,75 @@ function App() {
   useEffect(() => {
     if (!user) return;
 
-    const ws = new WebSocket(`ws://localhost:8880/echo?user_id=${encodeURIComponent(user.user_id)}`);
-    wsRef.current = ws;
+    let stopped = false;
+    let retryDelay = 1_000;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let socket: WebSocket | null = null;
 
-    ws.onopen = () => {
-      setConnected(true);
-    }
+    function connect() {
+      if (stopped) return;
+      if (!user) return;
 
-    ws.onmessage = (event: MessageEvent<string>) => {
-      try {
-        const message = JSON.parse(event.data);
+      const ws = new WebSocket(`ws://localhost:8880/echo?user_id=${encodeURIComponent(user.user_id)}`);
 
-        if (message?.type === "server_info") {
-          setServer(`Connected to ${message.server}`);
-          return;
+      socket = ws;
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (stopped) return;
+        retryDelay = 1_000;
+        setConnected(true);
+      };
+
+      ws.onmessage = (event: MessageEvent<string>) => {
+        if (stopped) return;
+
+        try {
+          const message = JSON.parse(event.data);
+
+          if (message?.type === "server_info") {
+            setServer(`Connected to ${message.server}`);
+            return;
+          }
+
+          if (
+            typeof message?.message_id === "string" &&
+            typeof message?.username === "string" &&
+            typeof message?.body === "string"
+          ) {
+            setMessages((prev) => [...prev, message])
+          }
+        } catch {
+          console.error("Received invalid JSON:", event.data)
         }
+      };
 
-        if (
-          typeof message?.message_id === "string" &&
-          typeof message?.username === "string" &&
-          typeof message?.body === "string"
-        ) {
-          setMessages((prev) => [...prev, message])
-        }
-      } catch {
-        console.error("Received invalid JSON:", event.data)
+      ws.onclose = () => {
+        if (stopped) return;
+
+        wsRef.current = null;
+        setConnected(false);
+        setServer("Disconnected. Retrying...")
+
+        retryTimer = setTimeout(
+          connect,
+          retryDelay + Math.random() * 500
+        );
+        retryDelay = Math.min(retryDelay * 2, 30_000);
       }
+
+      ws.onerror = () => {
+        ws.close();
+      }
+
     };
-
-    ws.onclose = () => {
-      setConnected(false);
-      setServer("disconnected")
-    }
-
-    ws.onerror = () => {
-      setConnected(false);
-      setServer("Connection error");
-    }
+    connect();
 
     return () => {
-      ws.close();
-      wsRef.current = null;
+      stopped = true;
+      clearTimeout(retryTimer);
+      socket?.close();
+      wsRef.current = null
     };
   }, [user]);
 
