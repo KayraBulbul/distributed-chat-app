@@ -36,7 +36,7 @@ flowchart LR
         ws2 ~~~ ws3
     end
 
-    servers --> redis[Redis Pub/Sub]
+    servers <--> redis[Redis Pub/Sub]
     servers --> postgres[(PostgreSQL)]
     servers --> prometheus[Prometheus]
     prometheus --> grafana[Grafana]
