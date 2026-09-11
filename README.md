@@ -25,21 +25,20 @@ keeps messages moving between all three instances.
 ```mermaid
 flowchart LR
     clients[React clients] --> caddy[Caddy load balancer]
-    caddy --> ws1[Go server 1]
-    caddy --> ws2[Go server 2]
-    caddy --> ws3[Go server 3]
+    caddy --> servers
 
-    ws1 <--> redis[Redis Pub/Sub]
-    ws2 <--> redis
-    ws3 <--> redis
+    subgraph servers[Go WebSocket servers]
+        direction TB
+        ws1[Go server 1]
+        ws2[Go server 2]
+        ws3[Go server 3]
+        ws1 ~~~ ws2
+        ws2 ~~~ ws3
+    end
 
-    ws1 --> postgres[(PostgreSQL)]
-    ws2 --> postgres
-    ws3 --> postgres
-
-    ws1 --> prometheus[Prometheus]
-    ws2 --> prometheus
-    ws3 --> prometheus
+    servers --> redis[Redis Pub/Sub]
+    servers --> postgres[(PostgreSQL)]
+    servers --> prometheus[Prometheus]
     prometheus --> grafana[Grafana]
 ```
 
